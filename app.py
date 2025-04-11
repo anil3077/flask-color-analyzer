@@ -3,15 +3,15 @@ from flask_cors import CORS
 import cv2
 import numpy as np
 import base64
+import os
 
 app = Flask(__name__)
-CORS(app)  # Allow all origins for local development
+CORS(app)
 
-# Improved HSV color ranges based on human-like perception
 color_ranges = {
-    "black": [(0, 0, 0), (180, 255, 70)],             # Includes very dark tones
-    "white": [(0, 0, 200), (180, 60, 255)],           # Includes off-whites
-    "gray": [(0, 0, 71), (180, 60, 199)],             # Midtones with low saturation
+    "black": [(0, 0, 0), (180, 255, 70)],
+    "white": [(0, 0, 200), (180, 60, 255)],
+    "gray": [(0, 0, 71), (180, 60, 199)],
     "red1": [(0, 70, 50), (10, 255, 255)],
     "red2": [(170, 70, 50), (180, 255, 255)],
     "orange": [(11, 100, 100), (25, 255, 255)],
@@ -21,7 +21,7 @@ color_ranges = {
     "blue": [(96, 100, 100), (130, 255, 255)],
     "purple": [(131, 50, 50), (160, 255, 255)],
     "pink": [(161, 50, 50), (169, 255, 255)],
-    "brown": [(10, 60, 50), (20, 130, 160)],         # Tuned for medium to dark browns
+    "brown": [(10, 60, 50), (20, 130, 160)],
     "tan": [(20, 50, 100), (30, 180, 230)],
     "beige": [(15, 30, 120), (25, 100, 255)],
 }
@@ -37,40 +37,62 @@ def calculate_color_percentage(roi):
     hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
     total_pixels = hsv.shape[0] * hsv.shape[1]
     raw_counts = {}
+    color_samples = {}
 
     for color, (lower, upper) in color_ranges.items():
         mask = cv2.inRange(hsv, np.array(lower), np.array(upper))
         count = cv2.countNonZero(mask)
         raw_counts[color] = count
 
-    # Merge red1 and red2
+        if count > 0:
+            masked_pixels = cv2.bitwise_and(roi, roi, mask=mask)
+            pixels = masked_pixels[np.where(mask != 0)]
+            if len(pixels) > 0:
+                avg_color = np.mean(pixels, axis=0).astype(int).tolist()  # BGR
+                color_samples[color] = avg_color[::-1]  # Convert to RGB
+
     red_total = raw_counts.get('red1', 0) + raw_counts.get('red2', 0)
     if red_total > 0:
         raw_counts['red'] = red_total
+        r_pixels = []
+        for key in ['red1', 'red2']:
+            mask = cv2.inRange(hsv, np.array(color_ranges[key][0]), np.array(color_ranges[key][1]))
+            masked = cv2.bitwise_and(roi, roi, mask=mask)
+            r_pixels.append(masked[np.where(mask != 0)])
+        red_pixels = np.concatenate(r_pixels) if r_pixels else []
+        if len(red_pixels) > 0:
+            color_samples['red'] = np.mean(red_pixels, axis=0).astype(int).tolist()[::-1]
     raw_counts.pop('red1', None)
     raw_counts.pop('red2', None)
+    color_samples.pop('red1', None)
+    color_samples.pop('red2', None)
 
-    # Remove colors with zero pixels
     filtered = {color: count for color, count in raw_counts.items() if count > 0}
     total_color_pixels = sum(filtered.values())
 
     if total_color_pixels == 0:
         return {}
 
-    # Normalize percentages
     percentages = {
         color: round((count / total_color_pixels) * 100, 2)
         for color, count in filtered.items()
     }
 
-    # Adjust so total = 100%
     total_percent = sum(percentages.values())
     if percentages and total_percent != 100:
         diff = round(100 - total_percent, 2)
         max_color = max(percentages, key=percentages.get)
         percentages[max_color] = round(percentages[max_color] + diff, 2)
 
-    return percentages
+    results = {
+        color: {
+            "percent": percentages[color],
+            "rgb": color_samples.get(color, [0, 0, 0])
+        }
+        for color in percentages
+    }
+
+    return results
 
 @app.route('/analyze', methods=['POST'])
 def analyze():
@@ -80,10 +102,11 @@ def analyze():
 
     try:
         image = decode_base64_image(data['image'])
-        percentages = calculate_color_percentage(image)
-        return jsonify({"colors": percentages})
+        results = calculate_color_percentage(image)
+        return jsonify({"colors": results})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
-    app.run(host='127.0.0.1', port=5050, debug=True)
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host='0.0.0.0', port=port)
