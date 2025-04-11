@@ -1,4 +1,3 @@
-// Only run if this is an image-only page
 if (document.contentType.startsWith("image/")) {
   const img = document.querySelector("img");
 
@@ -54,8 +53,6 @@ function startSelection(img) {
     drawing = false;
     endX = e.clientX;
     endY = e.clientY;
-
-    // Remove canvas
     canvas.remove();
 
     const bbox = {
@@ -95,7 +92,7 @@ function startSelection(img) {
     const base64 = cropCanvas.toDataURL("image/jpeg");
 
     try {
-      const res = await fetch("http://127.0.0.1:5050/analyze", {
+      const res = await fetch("https://flask-color-analyzer-1.onrender.com/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ image: base64 })
@@ -115,7 +112,11 @@ function startSelection(img) {
 }
 
 function showResultsOnPage(colors, x, y) {
+  const existing = document.getElementById("color-results-box");
+  if (existing) existing.remove();
+
   const container = document.createElement("div");
+  container.id = "color-results-box";
   container.style.position = "fixed";
   container.style.top = `${y + 10}px`;
   container.style.left = `${x + 10}px`;
@@ -129,13 +130,27 @@ function showResultsOnPage(colors, x, y) {
   container.style.overflowY = "auto";
   container.style.boxShadow = "0 0 10px rgba(0,0,0,0.5)";
 
-  const sorted = Object.entries(colors).sort((a, b) => b[1] - a[1]);
-  sorted.forEach(([color, percent]) => {
+  const sorted = Object.entries(colors).sort((a, b) => b[1].percent - a[1].percent);
+  sorted.forEach(([color, { percent, rgb }]) => {
     const row = document.createElement("div");
-    row.textContent = `${color}: ${percent}%`;
+    row.style.display = "flex";
+    row.style.alignItems = "center";
     row.style.marginBottom = "4px";
+
+    const swatch = document.createElement("div");
+    swatch.style.width = "16px";
+    swatch.style.height = "16px";
+    swatch.style.marginRight = "8px";
+    swatch.style.border = "1px solid #fff";
+    swatch.style.background = `rgb(${rgb.join(",")})`;
+
+    const label = document.createElement("span");
+    label.textContent = `${color}: ${percent}%`;
+
+    row.appendChild(swatch);
+    row.appendChild(label);
     container.appendChild(row);
   });
 
   document.body.appendChild(container);
-} 
+}
